@@ -1,0 +1,7 @@
+stages:
+  - name: data
+    scheduler:
+      scheduler_type: singlestep-stage
+      parameters:
+        nevents: [10000,10000,10000,10000]
+      workflow: {$ref: workflow_data.yml}

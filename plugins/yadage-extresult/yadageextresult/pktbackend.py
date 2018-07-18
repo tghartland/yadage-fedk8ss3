@@ -1,0 +1,25 @@
+import logging
+
+from packtivity.asyncbackends import ExternalAsyncMixin, RemoteResultMixin
+from packtivity.backendutils import backend
+
+from .jobspec import make_external_job
+from .kubejobbackend import KubernetesBackend
+from .S3ResultStore import S3ResultStore
+
+log = logging.getLogger(__name__)
+
+class RemoteResultExternalBackend(ExternalAsyncMixin,RemoteResultMixin):
+    def __init__(self, **kwargs):
+        kwargs['job_backend']   = KubernetesBackend(kwargs['resultstore'])
+        kwargs['resultbackend'] = S3ResultStore(kwargs['resultstore'])
+        ExternalAsyncMixin.__init__(self,**kwargs)
+        RemoteResultMixin.__init__(self,**kwargs)
+
+    def make_external_job(self,spec,parameters,state,metadata):
+        return make_external_job(spec,parameters,state)
+
+@backend('kubernetes')
+def k8s_backend(backendstring, backendopts):
+    backend = RemoteResultExternalBackend(**backendopts)
+    return False, backend
