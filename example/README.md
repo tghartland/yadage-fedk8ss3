@@ -1,3 +1,5 @@
-source ../../../venv/bin/activate
-yadage-run -f runspec.yml             
+__ACCESSKEY__=... __SECRETKEY__=... __HOST__=s3.cern.ch __BUCKET__=recast envsubst < runspec.yml.tmpl > spec.yml
+
+< source yadage and plugins > 
+yadage-run -f spec.yml             
 
