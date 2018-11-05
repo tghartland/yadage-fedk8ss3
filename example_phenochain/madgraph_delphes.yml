@@ -1,0 +1,39 @@
+stages:
+  - name: prepare
+    dependencies: []
+    scheduler:
+      scheduler_type: 'singlestep-stage'
+      parameters:
+        model: sm
+        parametercard: 'local://param.dat'
+        inputpars: defaultparam.yml
+      step: {$ref: 'preparestep.yml'}
+  - name: madgraph
+    dependencies: ['prepare','init']
+    scheduler:
+      scheduler_type: 'singlestep-stage'
+      parameters:
+        outputlhe: 'local://output.lhe'
+        events: {stages: init, output: nevents, unwrap: true}
+        paramcard: {stages: prepare, output: parcard, unwrap: true}
+      step: {$ref: 'madgraph.yml'}
+  - name: pythia
+    dependencies: ['madgraph']
+    scheduler:
+      scheduler_type: 'singlestep-stage'
+      parameters:
+        outputhepmc: 'local://output.hepmc'
+        events: {stages: init, output: nevents, unwrap: true}
+        lhefile: {stages: madgraph, output: lhefile, unwrap: true}
+      step: {$ref: 'pythia.yml'}
+  - name: delphes
+    dependencies:
+      - pythia
+    scheduler:
+      scheduler_type: 'singlestep-stage'
+      step: {$ref: 'delphes.yml'}
+      parameters:
+        outputroot: 'local://output.root'
+        outputlhco: 'local://output.lhco'
+        delphes_card: 'delphes/cards/delphes_card_ATLAS.tcl'
+        inputhepmc: {stages: pythia, output: hepmcfile}

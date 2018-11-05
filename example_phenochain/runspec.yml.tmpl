@@ -1,0 +1,31 @@
+dataarg: private_fs_public_obj:$__BUCKET__
+dataopts:
+  type: s3
+  access_key: $__ACCESSKEY__
+  secret_key: $__SECRETKEY__
+  host: $__HOST__
+  local: /work
+
+backend: kubernetes
+backendopts:
+  purepubopts:
+    exec: {logging: false}
+  resultstore:
+    access_key: $__ACCESSKEY__
+    secret_key: $__SECRETKEY__
+    host: $__HOST__
+    bucket: $__BUCKET__
+  kubeconfig: $KUBECONFIG
+
+plugins:
+- yadageextresult.pktbackend
+- yadageobjstore.register_yadage
+- yadageobjstore.register_packtivity
+
+updateinterval: 10
+ctrlopts:
+  disable_prepub: true
+
+workflow: madgraph_delphes.yml
+metadir: here
+visualize: true
