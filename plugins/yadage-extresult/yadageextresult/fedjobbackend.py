@@ -32,10 +32,13 @@ class SubmitToKubeMixin(object):
         self.federation_api = client.CustomObjectsApi(client.ApiClient(client.Configuration()))
 
 
-    def placement_random_cluster(self):
+    def placement_all_clusters(self):
         clusters = self.federation_api.list_cluster_custom_object(fed_group, fed_version, "federatedclusters")
         cluster_names = [cluster["metadata"]["name"] for cluster in clusters["items"]]
-        return [random.choice(cluster_names),]
+        return cluster_names
+
+    def placement_random_cluster(self):
+        return [random.choice(self.placement_all_clusters()),]
 
 
     def delete_created_resources(self, resources):
@@ -66,9 +69,17 @@ class SubmitToKubeMixin(object):
                 resource_name = r['metadata']['name']
                 try:
                     # client.CoreV1Api().delete_namespaced_config_map(resource_name,self.namespace,client.V1DeleteOptions())
-                    self.federation_client.delete_namespaced_custom_object(fed_group, fed_version, self.namespace, "federatedconfigmaps", resource_name, body_del_opts)
+                    self.federation_api.delete_namespaced_custom_object(fed_group, fed_version, self.namespace, "federatedconfigmaps", resource_name, body_del_opts)
                 except client.rest.ApiException:
                     pass
+
+            elif r["kind"] == "FederatedConfigMapPlacement":
+                resource_name = r['metadata']['name']
+                try:
+                    self.federation_api.delete_namespaced_custom_object(fed_group, fed_version, self.namespace, "federatedconfigmapplacements", resource_name, body_del_opts)
+                except client.rest.ApiException:
+                    pass
+
 
     def submit(self, jobspec):
         proxy_data, kube_resources = self.plan_kube_resources(jobspec)
@@ -76,7 +87,7 @@ class SubmitToKubeMixin(object):
         return proxy_data
 
     def ready(self, job_proxy):
-        print("\njob_proxy:\n", job_proxy, "\n")
+        # print("\njob_proxy:\n", job_proxy, "\n")
         ready = self.determine_readiness(job_proxy)
         if ready and not 'ready' in job_proxy:
             log.info('is first time ready %s', job_proxy['job_id'])
@@ -134,15 +145,14 @@ class FederatedKubernetesBackend(SubmitToKubeMixin):
                 # log.info("api_response: %s", api_response)
                 # log.info("")
 
-            elif r['kind'] == 'ConfigMap':
-                cm = client.V1ConfigMap(
-                    api_version = 'v1',
-                    kind = r['kind'],
-                    metadata = {'name': r['metadata']['name'], 'namespace': self.namespace, 'labels': self.resource_labels},
-                    data = r['data']
-                )
-                client.CoreV1Api().create_namespaced_config_map(self.namespace,cm)
-                log.info('created configmap %s', r['metadata']['name'])
+            elif r['kind'] == 'FederatedConfigMap':
+                api_response = self.federation_api.create_namespaced_custom_object(fed_group, fed_version, self.namespace, "federatedconfigmaps", r)
+                log.info('created federated configmap %s', r['metadata']['name'])
+
+            elif r["kind"] == "FederatedConfigMapPlacement":
+                api_response = self.federation_api.create_namespaced_custom_object(fed_group, fed_version, self.namespace, "federatedconfigmapplacements", r)
+                log.info("created federated configmap placement %s", r["metadata"]["name"])
+
 
 
     def determine_readiness(self, job_proxy):
@@ -290,16 +300,31 @@ class FederatedKubernetesBackend(SubmitToKubeMixin):
         jobconfig['resultfile'] = resultfilename
 
         kube_resources.append({
-          "apiVersion": "v1",
-          "kind": "ConfigMap",
-          "data": {
-            "ydgconfig.json": json.dumps(self.ydgconfig),
-            "jobconfig.json": json.dumps(jobconfig)
-          },
-          "metadata": {
-            "name": jobconfigname
-          }
+            "apiVersion": fed_api_ver,
+            "kind": "FederatedConfigMap",
+            "metadata": {
+                "name": jobconfigname
+            },
+            "spec": {
+                "template": {
+                    "data": {
+                        "ydgconfig.json": json.dumps(self.ydgconfig),
+                        "jobconfig.json": json.dumps(jobconfig)
+                    }
+                }
+            }
         })
+        kube_resources.append({
+            "apiVersion": fed_api_ver,
+            "kind": "FederatedConfigMapPlacement",
+            "metadata": {
+                "name": jobconfigname
+            },
+            "spec": {
+                "clusterNames": self.placement_all_clusters()
+            }
+        })
+
 
         configmounts = [{
             "name": "job-config",
@@ -314,35 +339,12 @@ class FederatedKubernetesBackend(SubmitToKubeMixin):
           "volumeMounts":  container_mounts + (configmounts if sequence_spec[seqname]['iscfg'] else [])
         } for seqname in sequence_spec['sequence']]
 
-        """kube_resources.append({
-          "apiVersion": "batch/v1",
-          "kind": "Job",
-          "spec": {
-            "backoffLimit": 0,
-            "template": {
-              "spec": {
-                "restartPolicy": "Never",
-                "securityContext" : {
-                    "runAsUser": 0
-                },
-                "initContainers": container_sequence[:-1],
-                "containers": container_sequence[-1:],
-                "volumes": [{
-                    "name": "job-config",
-                    "configMap": { "name": jobconfigname },
-                }] + volumes
-              },
-              "metadata": { "name": jobname }
-            }
-          },
-          "metadata": { "name": jobname }
-        })"""
         kube_resources.append({
             "apiVersion": fed_api_ver,
             "kind": "FederatedJob",
             "metadata": {
                 "name": jobname
-                },
+            },
             "spec": {
                 "template": {
                     "spec": {
@@ -352,32 +354,33 @@ class FederatedKubernetesBackend(SubmitToKubeMixin):
                                 "restartPolicy": "Never",
                                 "securityContext" : {
                                     "runAsUser": 0
-                                    },
+                                },
                                 "initContainers": container_sequence[:-1],
                                 "containers": container_sequence[-1:],
                                 "volumes": [{
                                     "name": "job-config",
                                     "configMap": { "name": jobconfigname },
                                     }] + volumes
-                                },
+                            },
                             "metadata": { "name": jobname }
-                            }
-                        },
-                    }
+                        }
+                    },
                 }
-            })
+            }
+        })
 
         kube_resources.append({
             "apiVersion": fed_api_ver,
             "kind": "FederatedJobPlacement",
             "metadata": {
                 "name": jobname
-                },
+            },
             "spec": {
                 # "clusterNames": self.placement_random_cluster()
-                "clusterNames": ["cluster-01", "cluster-02", "cluster-03"]
-                }
-            })
+                "clusterNames": self.placement_all_clusters()
+                # "clusterNames": ["cluster-01", "cluster-02", "cluster-03"]
+            }
+        })
 
 
         return {
